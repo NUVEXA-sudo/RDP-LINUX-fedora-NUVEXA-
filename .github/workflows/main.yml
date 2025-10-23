@@ -1,63 +1,67 @@
-name: Fedora RDP Server
+name: RDP
 on:
   workflow_dispatch:
 jobs:
-  fedora-rdp:
-    runs-on: ubuntu-latest
-    container:
-      image: fedora:latest
+  secure-rdp:
+    runs-on: windows-latest
     timeout-minutes: 3600
-
     steps:
-    - name: Install xRDP Only
-      run: |
-        dnf update -y
-        dnf install -y xrdp firewalld
+      - name: Configure Core RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
+          Restart-Service -Name TermService -Force
 
-    - name: Create RDP User
-      run: |
-        useradd -m -G wheel -s /bin/bash TOOLBOXLAP
-        echo "TOOLBOXLAP:admin@123" | chpasswd
-        echo "TOOLBOXLAP ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+      - name: Create RDP User with Static Password
+        run: |
+          $password = "admin@123"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
 
-    - name: Install Tailscale
-      run: |
-        dnf install -y curl
-        curl -fsSL https://tailscale.com/install.sh | sh
-        tailscale up --auth-key=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=fedora-rdp-$GITHUB_RUN_ID
-        
-        # الانتظار للحصول على IP
-        sleep 10
-        TS_IP=$(tailscale ip -4)
-        echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
+          if (-not (Get-LocalUser -Name "TOOLBOXLAP" -ErrorAction SilentlyContinue)) {
+              New-LocalUser -Name "TOOLBOXLAP" -Password $securePass -AccountNeverExpires
+          }
 
-    - name: Start RDP Services
-      run: |
-        # بدء xRDP
-        systemctl enable xrdp
-        systemctl enable xrdp-sesman
-        systemctl start xrdp
-        systemctl start xrdp-sesman
-        
-        # فتح البورت في الجدار الناري
-        firewall-cmd --add-port=3389/tcp --permanent 2>/dev/null || true
-        firewall-cmd --reload 2>/dev/null || true
+          Add-LocalGroupMember -Group "Administrators" -Member "TOOLBOXLAP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "TOOLBOXLAP"
 
-    - name: Display Connection Details
-      run: |
-        echo " "
-        echo "=== RDP SERVER READY ==="
-        echo "IP: $TAILSCALE_IP"
-        echo "Username: TOOLBOXLAP"
-        echo "Password: admin@123"
-        echo "Port: 3389"
-        echo "========================="
-        echo " "
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
 
-    - name: Keep Server Alive
-      run: |
-        echo "RDP Server is running..."
-        while true; do
-          echo "[$(date)] IP: $TAILSCALE_IP | User: TOOLBOXLAP | Pass: admin@123 | Port: 3389"
-          sleep 60
-        done
+      - name: Establish Tailscale Connection and Get IP
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+              Start-Sleep -Seconds 5
+              $retries++
+          }
+          if (-not $tsIP) {
+              Write-Error "Tailscale IP not assigned. Exiting."
+              exit 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      - name: Display RDP Connection Info
+        run: |
+          Write-Host "`n=== RDP CONNECTION INFO ==="
+          Write-Host "IP: $env:TAILSCALE_IP"
+          Write-Host "Username: TOOLBOXLAP"
+          Write-Host "Password: admin@123"
+          Write-Host "Port: 3389"
+          Write-Host "===========================`n"
+
+      - name: Maintain Connection
+        run: |
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active - IP: $env:TAILSCALE_IP | User: TOOLBOXLAP | Pass: admin@123"
+              Start-Sleep -Seconds 60
+          }
