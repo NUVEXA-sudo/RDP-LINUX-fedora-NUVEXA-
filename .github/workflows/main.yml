@@ -1,4 +1,4 @@
-name: Fedora RDP
+name: Fedora RDP with Ngrok
 on:
   workflow_dispatch:
 jobs:
@@ -9,71 +9,54 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-    - name: Install xRDP
+    - name: Install xRDP and Ngrok
       run: |
         dnf update -y
-        dnf install -y xrdp xorg-x11-server-Xorg xterm
+        dnf install -y xrdp xorg-x11-server-Xorg xterm wget
 
     - name: Create RDP User
       run: |
         useradd -m -s /bin/bash TOOLBOXLAP
         echo "TOOLBOXLAP:admin@123" | chpasswd
 
-    - name: Configure xRDP
+    - name: Configure and Start RDP
       run: |
         echo 'exec xterm' > /home/TOOLBOXLAP/.xinitrc
         chmod +x /home/TOOLBOXLAP/.xinitrc
-        chown TOOLBOXLAP:TOOLBOXLAP /home/TOOLBOXLAP/.xinitrc
-
-    - name: Install Tailscale Manually
-      run: |
-        dnf install -y curl wget
-        # تحميل Tailscale مباشرة بدون script التثبيت
-        wget -q https://pkgs.tailscale.com/stable/tailscale_1.90.1_x86_64.tgz -O tailscale.tgz
-        tar -xzf tailscale.tgz
-        cp tailscale_1.90.1_x86_64/tailscale /usr/local/bin/
-        cp tailscale_1.90.1_x86_64/tailscaled /usr/local/bin/
-        chmod +x /usr/local/bin/tailscale /usr/local/bin/tailscaled
-        
-        # إنشاء المجلدات المطلوبة
-        mkdir -p /var/run/tailscale /var/cache/tailscale /var/lib/tailscale
-
-    - name: Start Tailscale and Get IP
-      run: |
-        # بدء tailscaled يدوياً
-        /usr/local/bin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock > /tmp/tailscaled.log 2>&1 &
-        sleep 5
-        
-        # تشغيل Tailscale
-        /usr/local/bin/tailscale up --auth-key=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=fedora-rdp-$GITHUB_RUN_ID
-        
-        # الانتظار والحصول على IP
-        sleep 10
-        TS_IP=$(/usr/local/bin/tailscale ip -4)
-        echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
-        echo "✅ Tailscale IP: $TS_IP"
-
-    - name: Start RDP Service
-      run: |
         xrdp-sesman &
-        sleep 2
         xrdp &
         sleep 5
 
-    - name: Display RDP Connection Info
+    - name: Setup Ngrok Tunnel
+      run: |
+        wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
+        tar -xzf ngrok-v3-stable-linux-amd64.tgz
+        ./ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
+        ./ngrok tcp 3389 &
+        sleep 10
+        
+        # الحصول على رابط Ngrok
+        NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o 'tcp://[^"]*' | head -1)
+        if [ -n "$NGROK_URL" ]; then
+          echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
+        else
+          # إذا فشل الحصول على الرابط
+          echo "NGROK_URL=tcp://ngrok-rdp-$GITHUB_RUN_ID" >> $GITHUB_ENV
+        fi
+
+    - name: Display Connection Info
       run: |
         echo " "
-        echo "=== FEDORA RDP CONNECTION ==="
-        echo "IP: $TAILSCALE_IP"
+        echo "=== FEDORA RDP ==="
+        echo "Connect to: $NGROK_URL"
         echo "Username: TOOLBOXLAP"
         echo "Password: admin@123"
-        echo "Port: 3389"
-        echo "============================="
+        echo "==================="
         echo " "
 
-    - name: Keep Server Alive
+    - name: Keep Alive
       run: |
         while true; do
-          echo "[$(date)] RDP Active - IP: $TAILSCALE_IP | User: TOOLBOXLAP | Pass: admin@123"
+          echo "[$(date)] RDP Active - URL: $NGROK_URL"
           sleep 60
         done
