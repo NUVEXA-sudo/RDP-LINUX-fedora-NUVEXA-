@@ -1,0 +1,74 @@
+name: Fedora RDP Server
+on:
+  workflow_dispatch:
+jobs:
+  fedora-rdp:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+    timeout-minutes: 3600
+
+    steps:
+    - name: Install and Setup xRDP
+      run: |
+        dnf update -y
+        dnf install -y xrdp firewalld sudo xfce4 xfce4-terminal
+        
+        # تكوين xRDP
+        echo "xfce4-session" > ~/.Xclients
+        chmod +x ~/.Xclients
+        
+        # بدء خدمات xRDP
+        systemctl enable xrdp
+        systemctl enable xrdp-sesman
+        systemctl start xrdp
+        systemctl start xrdp-sesman
+        
+        # فتح المنفذ في الجدار الناري
+        firewall-cmd --add-port=3389/tcp --permanent
+        firewall-cmd --reload
+
+    - name: Create RDP User
+      run: |
+        useradd -m -G wheel -s /bin/bash fedorauser
+        echo "fedorauser:admin@123" | chpasswd
+        echo "fedorauser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+    - name: Get Connection Info
+      run: |
+        # الحصول على IP داخلي
+        hostname -I > /tmp/ip.txt
+        INTERNAL_IP=$(hostname -I | awk '{print $1}')
+        echo "INTERNAL_IP=$INTERNAL_IP" >> $GITHUB_ENV
+        
+        echo "RDP_USER=fedorauser" >> $GITHUB_ENV
+        echo "RDP_PASSWORD=admin@123" >> $GITHUB_ENV
+        echo "RDP_PORT=3389" >> $GITHUB_ENV
+
+    - name: Display RDP Connection Details
+      run: |
+        echo " "
+        echo "=== FEDORA RDP SERVER READY ==="
+        echo "Internal IP: $INTERNAL_IP"
+        echo "Username: fedorauser"
+        echo "Password: admin@123"
+        echo "Port: 3389"
+        echo "Desktop: XFCE"
+        echo "================================"
+        echo "Note: You need to port forward 3389 to access from outside"
+        echo " "
+
+    - name: Keep Server Alive
+      run: |
+        # التأكد من أن الخدمات شغالة
+        systemctl is-active xrdp
+        systemctl is-active xrdp-sesman
+        
+        # عرض حالة الشبكة
+        netstat -tlnp | grep 3389 || echo "RDP port not listening"
+        
+        # الحفاظ على التشغيل
+        while true; do
+          echo "[$(date)] Fedora RDP Server running - IP: $INTERNAL_IP"
+          sleep 300
+        done
