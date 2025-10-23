@@ -25,10 +25,16 @@ jobs:
         chmod +x /home/TOOLBOXLAP/.xinitrc
         chown TOOLBOXLAP:TOOLBOXLAP /home/TOOLBOXLAP/.xinitrc
 
-    - name: Install Tailscale
+    - name: Install Tailscale (Manual Start)
       run: |
         dnf install -y curl
         curl -fsSL https://tailscale.com/install.sh | sh
+        
+        # بدء Tailscale يدوياً بدون systemd
+        tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock &
+        sleep 5
+        
+        # تشغيل Tailscale
         tailscale up --auth-key=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=fedora-rdp-$GITHUB_RUN_ID
         
         # الانتظار للحصول على IP
@@ -38,6 +44,7 @@ jobs:
 
     - name: Start RDP Service
       run: |
+        # بدء xrdp يدوياً
         xrdp-sesman &
         sleep 2
         xrdp &
