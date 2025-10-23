@@ -25,28 +25,36 @@ jobs:
         chmod +x /home/TOOLBOXLAP/.xinitrc
         chown TOOLBOXLAP:TOOLBOXLAP /home/TOOLBOXLAP/.xinitrc
 
-    - name: Install and Start Tailscale (Fixed)
+    - name: Install Tailscale Manually
       run: |
-        dnf install -y curl
-        # تثبيت Tailscale بدون استخدام systemd
-        curl -fsSL https://tailscale.com/install.sh | sh
+        dnf install -y curl wget
+        # تحميل Tailscale مباشرة بدون script التثبيت
+        wget -q https://pkgs.tailscale.com/stable/tailscale_1.90.1_x86_64.tgz -O tailscale.tgz
+        tar -xzf tailscale.tgz
+        cp tailscale_1.90.1_x86_64/tailscale /usr/local/bin/
+        cp tailscale_1.90.1_x86_64/tailscaled /usr/local/bin/
+        chmod +x /usr/local/bin/tailscale /usr/local/bin/tailscaled
         
-        # بدء tailscaled يدوياً بدون systemctl
-        tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock &
+        # إنشاء المجلدات المطلوبة
+        mkdir -p /var/run/tailscale /var/cache/tailscale /var/lib/tailscale
+
+    - name: Start Tailscale and Get IP
+      run: |
+        # بدء tailscaled يدوياً
+        /usr/local/bin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock > /tmp/tailscaled.log 2>&1 &
         sleep 5
         
         # تشغيل Tailscale
-        tailscale up --auth-key=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=fedora-rdp-$GITHUB_RUN_ID
+        /usr/local/bin/tailscale up --auth-key=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=fedora-rdp-$GITHUB_RUN_ID
         
-        # الانتظار للحصول على IP
+        # الانتظار والحصول على IP
         sleep 10
-        TS_IP=$(tailscale ip -4)
+        TS_IP=$(/usr/local/bin/tailscale ip -4)
         echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
         echo "✅ Tailscale IP: $TS_IP"
 
     - name: Start RDP Service
       run: |
-        # بدء xrdp يدوياً
         xrdp-sesman &
         sleep 2
         xrdp &
