@@ -9,32 +9,16 @@ jobs:
     timeout-minutes: 3600
 
     steps:
-    - name: Install and Setup xRDP
+    - name: Install xRDP Only
       run: |
         dnf update -y
-        dnf install -y xrdp firewalld @xfce-desktop dbus-x11
-        
-        # تكوين xRDP
-        mkdir -p /home/TOOLBOXLAP/.config
-        echo 'exec startxfce4' > /home/TOOLBOXLAP/.xinitrc
-        chmod +x /home/TOOLBOXLAP/.xinitrc
-        
-        # تكوين xRDP
-        sed -i 's/use_vsock=true/use_vsock=false/g' /etc/xrdp/xrdp.ini
-        echo "[xfce]" >> /etc/xrdp/xrdp.ini
-        echo "name=xfce" >> /etc/xrdp/xrdp.ini
-        echo "lib=libxup.so" >> /etc/xrdp/xrdp.ini
-        echo "username=ask" >> /etc/xrdp/xrdp.ini
-        echo "password=ask" >> /etc/xrdp/xrdp.ini
-        echo "ip=127.0.0.1" >> /etc/xrdp/xrdp.ini
-        echo "port=-1" >> /etc/xrdp/xrdp.ini
+        dnf install -y xrdp firewalld
 
     - name: Create RDP User
       run: |
         useradd -m -G wheel -s /bin/bash TOOLBOXLAP
         echo "TOOLBOXLAP:admin@123" | chpasswd
         echo "TOOLBOXLAP ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
-        chown -R TOOLBOXLAP:TOOLBOXLAP /home/TOOLBOXLAP
 
     - name: Install Tailscale
       run: |
@@ -49,68 +33,31 @@ jobs:
 
     - name: Start RDP Services
       run: |
-        # بدء DBUS
-        dbus-daemon --system --nofork --nopidfile &
-        sleep 2
-        
         # بدء xRDP
-        xrdp-sesman &
-        sleep 2
-        xrdp &
-        sleep 5
+        systemctl enable xrdp
+        systemctl enable xrdp-sesman
+        systemctl start xrdp
+        systemctl start xrdp-sesman
         
         # فتح البورت في الجدار الناري
         firewall-cmd --add-port=3389/tcp --permanent 2>/dev/null || true
         firewall-cmd --reload 2>/dev/null || true
 
-    - name: Verify RDP Accessibility
-      run: |
-        echo "فحص اتصال RDP عبر Tailscale..."
-        # اختبار اتصال RDP
-        if command -v nc &> /dev/null; then
-          dnf install -y nc
-        fi
-        nc -z localhost 3389 && echo "✅ RDP port 3389 is listening" || echo "❌ RDP port not listening"
-
     - name: Display Connection Details
       run: |
         echo " "
-        echo "=== FEDORA RDP SERVER READY ==="
-        echo "Tailscale IP: $TAILSCALE_IP"
+        echo "=== RDP SERVER READY ==="
+        echo "IP: $TAILSCALE_IP"
         echo "Username: TOOLBOXLAP"
         echo "Password: admin@123"
         echo "Port: 3389"
-        echo "Desktop: XFCE"
-        echo " "
-        echo "INSTRUCTIONS:"
-        echo "1. تأكد من أن جهازك متصل بنفس شبكة Tailscale"
-        echo "2. افتح Remote Desktop Client"
-        echo "3. أدخل العنوان: $TAILSCALE_IP"
-        echo "4. استخدم البيانات أعلاه"
-        echo "================================"
+        echo "========================="
         echo " "
 
     - name: Keep Server Alive
       run: |
-        echo "RDP Server is running via Tailscale..."
-        # عرض حالة Tailscale
-        echo "📡 حالة Tailscale:"
-        tailscale status
-        
-        echo "🔌 حالة اتصال RDP:"
-        netstat -tlnp | grep 3389 && echo "✅ Port 3389 is open" || echo "❌ Port 3389 is closed"
-        
-        counter=0
+        echo "RDP Server is running..."
         while true; do
-          echo "[$(date)] RDP نشط - IP: $TAILSCALE_IP - User: TOOLBOXLAP"
-          counter=$((counter + 1))
-          # كل 5 دقائق نتحقق من حالة Tailscale
-          if [ $((counter % 5)) -eq 0 ]; then
-            TS_CURRENT_IP=$(tailscale ip -4)
-            if [ "$TS_CURRENT_IP" != "$TAILSCALE_IP" ]; then
-              echo "🔄 تحديث Tailscale IP: $TS_CURRENT_IP"
-              echo "TAILSCALE_IP=$TS_CURRENT_IP" >> $GITHUB_ENV
-            fi
-          fi
+          echo "[$(date)] IP: $TAILSCALE_IP | User: TOOLBOXLAP | Pass: admin@123 | Port: 3389"
           sleep 60
         done
