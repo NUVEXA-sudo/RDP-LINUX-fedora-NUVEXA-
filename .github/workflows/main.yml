@@ -1,62 +1,73 @@
-name: Fedora RDP with Ngrok
+name: cloudcore
 on:
   workflow_dispatch:
 jobs:
-  fedora-rdp:
+  secure-rdp:
     runs-on: ubuntu-latest
-    container:
-      image: fedora:latest
-    timeout-minutes: 3600
+    timeout-minutes: 99999
 
     steps:
-    - name: Install xRDP and Ngrok
-      run: |
-        dnf update -y
-        dnf install -y xrdp xorg-x11-server-Xorg xterm wget
+      - name: Install Fedora and XRDP
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-kvm virt-manager libvirt-daemon-system
 
-    - name: Create RDP User
-      run: |
-        useradd -m -s /bin/bash TOOLBOXLAP
-        echo "TOOLBOXLAP:admin@123" | chpasswd
+      - name: Create Fedora VM
+        run: |
+          # Download Fedora Cloud image
+          wget https://download.fedoraproject.org/pub/fedora/linux/releases/38/Cloud/x86_64/images/Fedora-Cloud-Base-38-1.6.x86_64.qcow2 -O fedora.qcow2
+          
+          # Create VM with QEMU
+          qemu-img create -f qcow2 fedora-disk.qcow2 20G
+          
+          # Start Fedora VM in background
+          nohup qemu-system-x86_64 \
+            -hda fedora.qcow2 \
+            -hdb fedora-disk.qcow2 \
+            -m 2048 \
+            -smp 2 \
+            -netdev user,id=net0,hostfwd=tcp::3389-:3389 \
+            -device virtio-net-pci,netdev=net0 \
+            -vnc :0 \
+            -daemonize
 
-    - name: Configure and Start RDP
-      run: |
-        echo 'exec xterm' > /home/TOOLBOXLAP/.xinitrc
-        chmod +x /home/TOOLBOXLAP/.xinitrc
-        xrdp-sesman &
-        xrdp &
-        sleep 5
-
-    - name: Setup Ngrok Tunnel
-      run: |
-        wget -q https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
-        tar -xzf ngrok-v3-stable-linux-amd64.tgz
-        ./ngrok config add-authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
-        ./ngrok tcp 3389 &
-        sleep 10
-        
-        # الحصول على رابط Ngrok
-        NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o 'tcp://[^"]*' | head -1)
-        if [ -n "$NGROK_URL" ]; then
-          echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
-        else
-          # إذا فشل الحصول على الرابط
-          echo "NGROK_URL=tcp://ngrok-rdp-$GITHUB_RUN_ID" >> $GITHUB_ENV
-        fi
-
-    - name: Display Connection Info
-      run: |
-        echo " "
-        echo "=== FEDORA RDP ==="
-        echo "Connect to: $NGROK_URL"
-        echo "Username: TOOLBOXLAP"
-        echo "Password: admin@123"
-        echo "==================="
-        echo " "
-
-    - name: Keep Alive
-      run: |
-        while true; do
-          echo "[$(date)] RDP Active - URL: $NGROK_URL"
+      - name: Configure Fedora RDP
+        run: |
+          # Wait for VM to boot and install xrdp
           sleep 60
-        done
+          
+          # Install xrdp and desktop environment
+          sudo apt-get install -y xrdp
+          sudo systemctl enable xrdp
+          sudo systemctl start xrdp
+          
+          # Create user for RDP access
+          sudo useradd -m -s /bin/bash fedorardp
+          echo "fedorardp:fedora123" | sudo chpasswd
+          sudo usermod -aG sudo fedorardp
+
+      - name: Install and Start Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=fedora-rdp-${{ github.run_id }}
+
+      - name: Get Tailscale IP
+        run: |
+          TS_IP=$(tailscale ip -4)
+          echo "TAILSCALE_IP=$TS_IP" >> $env:GITHUB_ENV
+          echo "RDP_IP=$TS_IP" >> $env:GITHUB_ENV
+
+      - name: Infinite Loop to Keep Alive
+        run: |
+          echo "🎯 Fedora RDP System Ready!"
+          echo "📍 RDP Address: ${{ env.TAILSCALE_IP }}"
+          echo "👤 Username: fedorardp"
+          echo "🔑 Password: fedora123"
+          echo "🔄 System will remain active indefinitely..."
+          echo ""
+          echo "⏳ Starting infinite loop..."
+          
+          while true; do
+            echo "$(date): 🔄 Fedora RDP Running... | IP: ${{ env.TAILSCALE_IP }}"
+            sleep 300
+          done
