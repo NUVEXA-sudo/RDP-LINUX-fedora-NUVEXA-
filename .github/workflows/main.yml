@@ -1,73 +1,103 @@
-name: cloudcore
+name: fedora-kde-2025
 on:
   workflow_dispatch:
 jobs:
-  secure-rdp:
+  fedora-rdp:
     runs-on: ubuntu-latest
     timeout-minutes: 99999
 
     steps:
-      - name: Install Fedora and XRDP
+      - name: Download Fedora 43 KDE Live ISO
         run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-kvm virt-manager libvirt-daemon-system
+          # تحميل Fedora 43 KDE - أحدث إصدار 2025
+          wget https://download.fedoraproject.org/pub/fedora/linux/releases/43/KDE/x86_64/iso/Fedora-KDE-Desktop-Live-43-1.6.x86_64.iso -O fedora-kde.iso
+          
+          # إنشاء قرص افتراضي
+          qemu-img create -f qcow2 fedora-disk.qcow2 60G
+          echo "✅ Fedora 43 KDE downloaded successfully!"
 
-      - name: Create Fedora VM
+      - name: Start Fedora 43 KDE VM with 16GB RAM
         run: |
-          # Download Fedora Cloud image
-          wget https://download.fedoraproject.org/pub/fedora/linux/releases/38/Cloud/x86_64/images/Fedora-Cloud-Base-38-1.6.x86_64.qcow2 -O fedora.qcow2
-          
-          # Create VM with QEMU
-          qemu-img create -f qcow2 fedora-disk.qcow2 20G
-          
-          # Start Fedora VM in background
+          # تشغيل Fedora 43 KDE Live مع إعدادات متقدمة
           nohup qemu-system-x86_64 \
-            -hda fedora.qcow2 \
-            -hdb fedora-disk.qcow2 \
-            -m 2048 \
-            -smp 2 \
-            -netdev user,id=net0,hostfwd=tcp::3389-:3389 \
+            -accel kvm \
+            -cpu host \
+            -m 16G \          # 🎯 16GB رام
+            -smp 8 \           # 🎯 8 معالجات
+            -cdrom fedora-kde.iso \
+            -drive file=fedora-disk.qcow2,format=qcow2 \
+            -netdev user,id=net0,hostfwd=tcp::3389-:3389,hostfwd=tcp::2222-:22,hostfwd=tcp::8080-:8080 \
             -device virtio-net-pci,netdev=net0 \
-            -vnc :0 \
-            -daemonize
+            -vga virtio \
+            -display none \
+            -daemonize &
 
-      - name: Configure Fedora RDP
+          echo "🔄 جاري تشغيل Fedora 43 KDE Live..."
+          sleep 90
+
+      - name: Install XRDP on Fedora KDE
         run: |
-          # Wait for VM to boot and install xrdp
-          sleep 60
+          # ننتحص حتى يكون النظام جاهزاً ثم نثبت XRDP
+          sudo apt-get install -y sshpass
           
-          # Install xrdp and desktop environment
-          sudo apt-get install -y xrdp
-          sudo systemctl enable xrdp
-          sudo systemctl start xrdp
-          
-          # Create user for RDP access
-          sudo useradd -m -s /bin/bash fedorardp
-          echo "fedorardp:fedora123" | sudo chpasswd
-          sudo usermod -aG sudo fedorardp
+          # نستخدم SSH لتثبيت XRDP على النظام الحي
+          sshpass -p '' ssh -o StrictHostKeyChecking=no -p 2222 liveuser@localhost << 'EOF'
+            # تصريح sudo
+            echo 'liveuser ALL=(ALL) NOPASSWD:ALL' | sudo tee -a /etc/sudoers
+            
+            # تثبيت XRDP وبيئة KDE كاملة
+            sudo dnf update -y
+            sudo dnf install -y xrdp kde-desktop firefox chromium
+            sudo systemctl enable xrdp
+            sudo systemctl start xrdp
+            
+            # إنشاء مستخدم دائم
+            sudo useradd -m -G wheel -s /bin/bash fedora43
+            echo "fedora43:Fedora43@2025!" | sudo chpasswd
+            
+            # إعدادات الجدار الناري
+            sudo firewall-cmd --add-port=3389/tcp --permanent
+            sudo firewall-cmd --add-port=22/tcp --permanent
+            sudo firewall-cmd --reload
+            
+            # تثبيت برامج إضافية
+            sudo dnf install -y git curl wget vim nano
+            sudo dnf install -y gcc-c++ make python3-pip nodejs npm
+            
+            echo "✅ Fedora 43 KDE with XRDP configured!"
+          EOF
 
-      - name: Install and Start Tailscale
+      - name: Install Tailscale
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
-          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=fedora-rdp-${{ github.run_id }}
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=fedora43-kde-${{ github.run_id }}
 
-      - name: Get Tailscale IP
+      - name: Get Connection Info
         run: |
           TS_IP=$(tailscale ip -4)
           echo "TAILSCALE_IP=$TS_IP" >> $env:GITHUB_ENV
-          echo "RDP_IP=$TS_IP" >> $env:GITHUB_ENV
+          echo "🎯 Fedora 43 KDE 2025 Ready!"
+          echo "📍 RDP Address: $TS_IP:3389"
+          echo "👤 Username: fedora43"
+          echo "🔑 Password: Fedora43@2025!"
+          echo "💾 RAM: 16GB"
+          echo "⚡ CPU: 8 Cores"
+          echo "💽 Storage: 60GB"
+          echo "🎨 Desktop: KDE Plasma"
+          echo "🖥️ Version: Fedora 43 (2025 Latest)"
 
-      - name: Infinite Loop to Keep Alive
+      - name: KDE Desktop Monitor
         run: |
-          echo "🎯 Fedora RDP System Ready!"
-          echo "📍 RDP Address: ${{ env.TAILSCALE_IP }}"
-          echo "👤 Username: fedorardp"
-          echo "🔑 Password: fedora123"
-          echo "🔄 System will remain active indefinitely..."
-          echo ""
-          echo "⏳ Starting infinite loop..."
-          
+          counter=1
           while true; do
-            echo "$(date): 🔄 Fedora RDP Running... | IP: ${{ env.TAILSCALE_IP }}"
+            echo "🌟 [$counter] Fedora 43 KDE Active - $(date +'%Y-%m-%d %H:%M:%S')"
+            echo "📍 Connect: ${{ env.TAILSCALE_IP }}:3389"
+            echo "👤 User: fedora43"
+            echo "🔑 Pass: Fedora43@2025!"
+            echo "🎨 Desktop: KDE Plasma"
+            echo "💾 RAM: 16GB | ⚡ CPU: 8 Cores"
+            echo "⏰ Uptime: $((counter * 5)) minutes"
+            echo "────────────────────────────────────────"
             sleep 300
+            counter=$((counter + 1))
           done
